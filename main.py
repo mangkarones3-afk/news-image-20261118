@@ -1,74 +1,68 @@
-#!/usr/bin/env python3
-"""Entrypoint for the news-image-20261118 entry.
+"""Deliver the finished news poster to the grader's output folder.
 
-The finished poster lives next to this file as ``entry.png``. Running
-the program copies that asset into the output directory, producing
-``/output/entry.png``. Standard library only; no network access.
+The poster itself ships beside this script as entry.png. Running the
+program places a copy of that file where the harness expects to find
+it and then proves, by hashing both files, that the copy arrived
+byte for byte intact.
 """
 
 import hashlib
 import os
+import shutil
 import sys
-
-ASSET_FILENAME = "entry.png"
-OUTPUT_DIR = "/output"
-OUTPUT_FILENAME = "entry.png"
-BLOCK = 65536
+from pathlib import Path
 
 
-def asset_path():
-    folder = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(folder, ASSET_FILENAME)
-
-
-def destination_path():
-    return os.path.join(OUTPUT_DIR, OUTPUT_FILENAME)
+POSTER_NAME = "entry.png"
+FALLBACK_OUTPUT_DIR = "/output"
+CHUNK_SIZE = 64 * 1024
 
 
 def digest_of(path):
+    """Return the SHA-256 hex digest of the file at *path*."""
     hasher = hashlib.sha256()
-    with open(path, "rb") as handle:
+    with path.open("rb") as handle:
         while True:
-            piece = handle.read(BLOCK)
-            if not piece:
+            block = handle.read(CHUNK_SIZE)
+            if not block:
                 break
-            hasher.update(piece)
+            hasher.update(block)
     return hasher.hexdigest()
 
 
-def copy_asset(source, target):
-    moved = 0
-    with open(source, "rb") as reader, open(target, "wb") as writer:
-        while True:
-            piece = reader.read(BLOCK)
-            if not piece:
-                break
-            writer.write(piece)
-            moved += len(piece)
-    return moved
+def destination_path():
+    """Work out where the poster copy has to land."""
+    folder = os.environ.get("MAKEFUN_OUTPUT_DIR") or FALLBACK_OUTPUT_DIR
+    return Path(folder) / POSTER_NAME
 
 
-def run():
-    source = asset_path()
-    if not os.path.isfile(source):
-        sys.stderr.write("missing asset: %s\n" % source)
+def main():
+    source = Path(__file__).resolve().parent / POSTER_NAME
+    if not source.is_file():
+        print(f"poster not found beside the script: {source}", file=sys.stderr)
         return 1
-    if not os.path.isdir(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+
     target = destination_path()
-    nbytes = copy_asset(source, target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.resolve() != source:
+        shutil.copyfile(source, target)
+    # When the output folder is the script's own folder the poster is
+    # already in place, so copying it onto itself is skipped; the hash
+    # check below still proves the file at the destination is intact.
+
     source_digest = digest_of(source)
-    written_digest = digest_of(target)
-    if written_digest != source_digest:
-        sys.stderr.write(
-            "digest mismatch: source %s, written %s\n"
-            % (source_digest, written_digest)
+    target_digest = digest_of(target)
+    if target_digest != source_digest:
+        print(
+            "copied poster failed verification: "
+            f"source sha256 {source_digest} != output sha256 {target_digest}",
+            file=sys.stderr,
         )
         return 1
-    print("copied %d bytes -> %s" % (nbytes, target))
-    print("sha256 %s" % written_digest)
+
+    print(f"entry.png delivered to {target} (sha256 {target_digest})")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    sys.exit(main())
